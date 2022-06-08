@@ -7,7 +7,6 @@ import 'package:hive/src/backend/vm/read_write_sync.dart';
 import 'package:hive/src/backend/vm/storage_backend_vm.dart';
 import 'package:hive/src/binary/binary_writer_impl.dart';
 import 'package:hive/src/binary/frame.dart';
-import 'package:hive/src/box/keystore.dart';
 import 'package:hive/src/io/frame_io_helper.dart';
 import 'package:hive/src/registry/type_registry_impl.dart';
 import 'package:mocktail/mocktail.dart';
@@ -170,10 +169,13 @@ void main() {
           when(() => lockRaf.lock()).thenAnswer((i) => Future.value(lockRaf));
           when(() => writeRaf.truncate(20))
               .thenAnswer((i) => Future.value(writeRaf));
+          when(() => writeRaf.setPosition(20))
+              .thenAnswer((i) => Future.value(writeRaf));
 
           await backend.initialize(
               TypeRegistryImpl.nullImpl, MockKeystore(), lazy);
           verify(() => writeRaf.truncate(20));
+          verify(() => writeRaf.setPosition(20));
         });
 
         test('recoveryOffset without crash recovery', () async {

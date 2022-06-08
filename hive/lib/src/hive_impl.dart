@@ -12,17 +12,20 @@ import 'package:hive/src/box/box_impl.dart';
 import 'package:hive/src/box/default_compaction_strategy.dart';
 import 'package:hive/src/box/default_key_comparator.dart';
 import 'package:hive/src/box/lazy_box_impl.dart';
-import 'package:hive/src/util/extensions.dart';
 import 'package:hive/src/registry/type_registry_impl.dart';
+import 'package:hive/src/util/extensions.dart';
 import 'package:meta/meta.dart';
 
 import 'backend/storage_backend.dart';
 
 /// Not part of public API
 class HiveImpl extends TypeRegistryImpl implements HiveInterface {
+  static final BackendManagerInterface _defaultBackendManager =
+      BackendManager.select();
+
   final _boxes = HashMap<String, BoxBaseImpl>();
   final _openingBoxes = HashMap<String, Future>();
-  final BackendManager _manager;
+  BackendManagerInterface? _managerOverride;
   final Random _secureRandom = Random.secure();
 
   /// Not part of public API
@@ -30,22 +33,14 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
   String? homePath;
 
   /// Not part of public API
-  HiveImpl() : _manager = BackendManager() {
+  HiveImpl() {
     _registerDefaultAdapters();
   }
 
-  /// Not part of public API
-  @visibleForTesting
-  HiveImpl.debug(this._manager) {
-    _registerDefaultAdapters();
-  }
-
-  /// Not part of public API
-  @visibleForTesting
-  HiveImpl.test() : _manager = BackendManager() {
-    registerAdapter(DateTimeAdapter<DateTime>(), internal: true);
-    registerAdapter(BigIntAdapter(), internal: true);
-  }
+  /// either returns the preferred [BackendManagerInterface] or the
+  /// platform default fallback
+  BackendManagerInterface get _manager =>
+      _managerOverride ?? _defaultBackendManager;
 
   void _registerDefaultAdapters() {
     registerAdapter(DateTimeWithTimezoneAdapter(), internal: true);
@@ -54,8 +49,13 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
   }
 
   @override
-  void init(String path) {
+  void init(
+    String? path, {
+    HiveStorageBackendPreference backendPreference =
+        HiveStorageBackendPreference.native,
+  }) {
     homePath = path;
+    _managerOverride = BackendManager.select(backendPreference);
   }
 
   Future<BoxBase<E>> _openBox<E>(
@@ -67,6 +67,7 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
     bool recovery,
     String? path,
     Uint8List? bytes,
+    String? collection,
   ) async {
     assert(path == null || bytes == null);
     assert(name.length <= 255 && name.isAscii,
@@ -91,28 +92,29 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
       var completer = Completer();
       _openingBoxes[name] = completer.future;
 
+      BoxBaseImpl<E>? newBox;
       try {
         StorageBackend backend;
         if (bytes != null) {
           backend = StorageBackendMemory(bytes, cipher);
         } else {
-          backend =
-              await _manager.open(name, path ?? homePath, recovery, cipher);
+          backend = await _manager.open(
+              name, path ?? homePath, recovery, cipher, collection);
         }
 
-        BoxBaseImpl<E> newBox;
         if (lazy) {
           newBox = LazyBoxImpl<E>(this, name, comparator, compaction, backend);
         } else {
           newBox = BoxImpl<E>(this, name, comparator, compaction, backend);
         }
 
-        _boxes[name] = newBox;
         await newBox.initialize();
+        _boxes[name] = newBox;
 
         completer.complete();
         return newBox;
       } catch (error, stackTrace) {
+        newBox?.close();
         completer.completeError(error, stackTrace);
         rethrow;
       } finally {
@@ -131,13 +133,14 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
     bool crashRecovery = true,
     String? path,
     Uint8List? bytes,
-    @deprecated List<int>? encryptionKey,
+    String? collection,
+    @Deprecated('Use encryptionCipher instead') List<int>? encryptionKey,
   }) async {
     if (encryptionKey != null) {
       encryptionCipher = HiveAesCipher(encryptionKey);
     }
     return await _openBox<E>(name, false, encryptionCipher, keyComparator,
-        compactionStrategy, crashRecovery, path, bytes) as Box<E>;
+        compactionStrategy, crashRecovery, path, bytes, collection) as Box<E>;
   }
 
   @override
@@ -148,13 +151,22 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
     CompactionStrategy compactionStrategy = defaultCompactionStrategy,
     bool crashRecovery = true,
     String? path,
-    @deprecated List<int>? encryptionKey,
+    String? collection,
+    @Deprecated('Use encryptionCipher instead') List<int>? encryptionKey,
   }) async {
     if (encryptionKey != null) {
       encryptionCipher = HiveAesCipher(encryptionKey);
     }
-    return await _openBox<E>(name, true, encryptionCipher, keyComparator,
-        compactionStrategy, crashRecovery, path, null) as LazyBox<E>;
+    return await _openBox<E>(
+        name,
+        true,
+        encryptionCipher,
+        keyComparator,
+        compactionStrategy,
+        crashRecovery,
+        path,
+        null,
+        collection) as LazyBox<E>;
   }
 
   BoxBase<E> _getBoxInternal<E>(String name, [bool? lazy]) {
@@ -210,13 +222,15 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
   }
 
   @override
-  Future<void> deleteBoxFromDisk(String name, {String? path}) async {
+  Future<void> deleteBoxFromDisk(String name,
+      {String? path, String? collection}) async {
     var lowerCaseName = name.toLowerCase();
     var box = _boxes[lowerCaseName];
+    print(box);
     if (box != null) {
       await box.deleteFromDisk();
     } else {
-      await _manager.deleteBox(lowerCaseName, path ?? homePath);
+      await _manager.deleteBox(lowerCaseName, path ?? homePath, collection);
     }
   }
 
@@ -235,8 +249,10 @@ class HiveImpl extends TypeRegistryImpl implements HiveInterface {
   }
 
   @override
-  Future<bool> boxExists(String name, {String? path}) async {
+  Future<bool> boxExists(String name,
+      {String? path, String? collection}) async {
     var lowerCaseName = name.toLowerCase();
-    return await _manager.boxExists(lowerCaseName, path ?? homePath);
+    return await _manager.boxExists(
+        lowerCaseName, path ?? homePath, collection);
   }
 }

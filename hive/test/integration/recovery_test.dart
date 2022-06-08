@@ -5,8 +5,8 @@ import 'dart:io';
 
 import 'package:hive/src/box/keystore.dart';
 import 'package:hive/src/hive_impl.dart';
-import 'package:test/test.dart';
 import 'package:path/path.dart' as path;
+import 'package:test/test.dart';
 
 import '../tests/backend/vm/storage_backend_vm_test.dart';
 import '../tests/common.dart';
@@ -20,7 +20,7 @@ Future _performTest(bool lazy) async {
   framesSetLengthOffset(frames, frameBytes);
 
   var dir = await getTempDir();
-  var hive = HiveImpl.test();
+  var hive = HiveImpl();
   hive.init(dir.path);
 
   for (var i = 0; i < bytes.length; i++) {
@@ -46,7 +46,6 @@ Future _performTest(bool lazy) async {
       await box.close();
     }
 
-    print((await boxFile.readAsBytes()).length);
     expect(await boxFile.readAsBytes(), getFrameBytes(subFrames));
   }
 }

@@ -11,7 +11,7 @@ import 'package:meta/meta.dart';
 
 /// Not part of public API
 class BinaryWriterImpl extends BinaryWriter {
-  static const _initBufferSize = 256;
+  static const _initBufferSize = 4096;
 
   final TypeRegistryImpl _typeRegistry;
   Uint8List _buffer = Uint8List(_initBufferSize);
@@ -242,9 +242,10 @@ class BinaryWriterImpl extends BinaryWriter {
     ArgumentError.checkNotNull(key);
 
     if (key is String) {
-      writeByte(FrameKeyType.asciiStringT);
-      writeByte(key.length);
-      _addBytes(key.codeUnits);
+      writeByte(FrameKeyType.utf8StringT);
+      var bytes = BinaryWriter.utf8Encoder.convert(key);
+      writeByte(bytes.length);
+      _addBytes(bytes);
     } else {
       writeByte(FrameKeyType.uintT);
       writeUint32(key as int);
